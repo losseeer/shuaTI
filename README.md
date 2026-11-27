@@ -1,6 +1,7 @@
 # shuaTI
 
 [![CI](https://github.com/losseeer/shuaTI/actions/workflows/ci.yml/badge.svg)](https://github.com/losseeer/shuaTI/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 本机运行的安卓刷题应用。导入 JSON 题库后按轮次练习，记录断点与历史，可把全部数据导出成单个文件备份。
 
@@ -99,3 +100,7 @@ app/src/main/java/com/shua/ti/
 ## 贡献
 
 提交前请确保 `./gradlew :app:testDebugUnitTest` 通过，CI 会对每个 PR 跑同样的检查。
+
+## 许可证
+
+[MIT](LICENSE)
