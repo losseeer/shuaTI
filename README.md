@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/losseeer/shuaTI/actions/workflows/ci.yml/badge.svg)](https://github.com/losseeer/shuaTI/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/losseeer/shuaTI)](https://github.com/losseeer/shuaTI/releases/latest)
 
 本机运行的安卓刷题应用。导入 JSON 题库后按轮次练习，记录断点与历史，可把全部数据导出成单个文件备份。
 
@@ -17,7 +18,13 @@
 - 备份导出为单个 JSON，还原时新增题库、不覆盖现有数据
 - 支持从微信 / QQ 等应用「用其他应用打开」直接导入
 
-## 快速开始
+## 下载
+
+[最新版本 APK](https://github.com/losseeer/shuaTI/releases/latest) · 需要 Android 8.0 及以上
+
+安装时在系统提示中允许「安装未知来源应用」。若设备上已装有其他签名的旧版本，需先卸载再安装，卸载会清空本机数据。
+
+## 从源码构建
 
 环境要求：JDK 17、Android SDK Platform 35 与 Build-Tools 35.0.0。
 
