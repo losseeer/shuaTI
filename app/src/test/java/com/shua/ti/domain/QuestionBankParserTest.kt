@@ -95,4 +95,30 @@ class QuestionBankParserTest {
         assertEquals(ImportErrorCode.MISSING_FIELD, outcome.code)
         assertEquals("第 1 题 · stem", outcome.location)
     }
+
+    @Test
+    fun `explanation defaults to empty when absent`() {
+        val outcome = QuestionBankParser.parse(bank(validQuestion)) as ParseOutcome.Ok
+        assertEquals("", outcome.bank.questions[0].explanation)
+    }
+
+    @Test
+    fun `explanation is parsed when present`() {
+        val withExplanation = validQuestion.replace(
+            "\"answer\": \"B\"",
+            "\"answer\": \"B\", \"explanation\": \"因为 1 加 1 等于 2\"",
+        )
+        val outcome = QuestionBankParser.parse(bank(withExplanation)) as ParseOutcome.Ok
+        assertEquals("因为 1 加 1 等于 2", outcome.bank.questions[0].explanation)
+    }
+
+    @Test
+    fun `blank explanation is treated as absent`() {
+        val withBlank = validQuestion.replace(
+            "\"answer\": \"B\"",
+            "\"answer\": \"B\", \"explanation\": \"   \"",
+        )
+        val outcome = QuestionBankParser.parse(bank(withBlank)) as ParseOutcome.Ok
+        assertEquals("", outcome.bank.questions[0].explanation)
+    }
 }

@@ -20,6 +20,7 @@ import com.shua.ti.data.entity.QuestionBank
 /**
  * 本机单库。版本变更时递增 version 并补 Migration。
  * 2：backup_file 增加 file_name，列表不再展示 content uri。
+ * 3：question 增加 explanation，题目可选解析。
  */
 @Database(
     entities = [
@@ -29,7 +30,7 @@ import com.shua.ti.data.entity.QuestionBank
         PracticeProgress::class,
         BackupFile::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -52,6 +53,17 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * 旧题目没有解析，补空串后结果页不显示解析区。
+         */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE question ADD COLUMN explanation TEXT NOT NULL DEFAULT ''",
+                )
+            }
+        }
+
         @Volatile
         private var instance: AppDatabase? = null
 
@@ -62,7 +74,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "shuati.db",
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .build()
                     .also { instance = it }
             }

@@ -103,4 +103,66 @@ class BackupCodecTest {
         val decoded = BackupCodec.decode(encoded)
         assertTrue(decoded is DecodeOutcome.Err)
     }
+
+    @Test
+    fun `explanation survives round trip`() {
+        val question = BackupQuestion(
+            stem = "1 + 1 = ?",
+            optionA = "1",
+            optionB = "2",
+            optionC = "3",
+            optionD = "4",
+            answer = "B",
+            position = 1,
+            explanation = "一加一等于二",
+        )
+        val encoded = BackupCodec.encode(
+            BackupPayload(
+                exportedAt = 1,
+                banks = listOf(
+                    BackupBank(
+                        sourceFileName = "e.json",
+                        schemaVersion = 1,
+                        importedAt = 1,
+                        questions = listOf(question),
+                    ),
+                ),
+            ),
+        )
+        val decoded = BackupCodec.decode(encoded) as DecodeOutcome.Ok
+        assertEquals("一加一等于二", decoded.payload.banks[0].questions[0].explanation)
+    }
+
+    @Test
+    fun `backup without explanation still decodes`() {
+        // 模拟 0.1.1 及更早导出的备份：题目里没有 explanation 字段
+        val legacy = """
+            {
+              "backup_type": "shuati_backup",
+              "format_version": 1,
+              "exported_at": 1700000000000,
+              "banks": [
+                {
+                  "source_file_name": "old.json",
+                  "schema_version": 1,
+                  "imported_at": 1700000000000,
+                  "questions": [
+                    {
+                      "stem": "1 + 1 = ?",
+                      "option_a": "1",
+                      "option_b": "2",
+                      "option_c": "3",
+                      "option_d": "4",
+                      "answer": "B",
+                      "position": 1
+                    }
+                  ]
+                }
+              ]
+            }
+        """.trimIndent()
+        val decoded = BackupCodec.decode(legacy)
+        assertTrue(decoded is DecodeOutcome.Ok)
+        assertEquals("", (decoded as DecodeOutcome.Ok).payload.banks[0].questions[0].explanation)
+    }
 }

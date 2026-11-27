@@ -38,7 +38,8 @@ private val QUESTION_TEMPLATE = """
       "option_b": "选项 B",
       "option_c": "选项 C",
       "option_d": "选项 D",
-      "answer": "A"
+      "answer": "A",
+      "explanation": "解析写在这里，不需要就删掉这一行"
     }
   ]
 }
@@ -76,6 +77,7 @@ fun HelpScreen(onBack: () -> Unit, onNotify: (String) -> Unit) {
         HelpSection(
             title = "交卷",
             body = "答完点「交卷」，会显示答对多少、每题对错和正确答案。\n\n" +
+                "题库里带解析的题，解析会显示在对应题目下面；答题时看不到，交卷后才有。\n\n" +
                 "有题没答时会先问你一次，确认后这些题算答错。结果立刻存下来，退出应用也不会丢。",
         )
 

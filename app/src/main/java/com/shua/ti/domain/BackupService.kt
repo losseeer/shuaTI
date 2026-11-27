@@ -92,6 +92,7 @@ class BackupService(
                         optionD = q.optionD,
                         answer = q.answer,
                         position = q.position,
+                        explanation = q.explanation,
                     )
                 },
                 progress = progress?.let {
@@ -176,6 +177,7 @@ class BackupService(
                             optionD = q.optionD,
                             answer = q.answer,
                             position = q.position,
+                            explanation = q.explanation,
                         )
                     }
                     val newIds = questionDao.insertAll(questions)

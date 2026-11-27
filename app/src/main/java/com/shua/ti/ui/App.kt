@@ -389,8 +389,9 @@ private fun QuizScreen(
             )
             Spacer(Modifier.height(8.dp))
             LazyColumn(modifier = Modifier.weight(1f)) {
+                val byId = round.questions.associateBy { it.questionId }
                 items(graded.rows, key = { it.questionId }) { row ->
-                    ResultRow(row)
+                    ResultRow(row, byId[row.questionId])
                 }
             }
             Button(onClick = onNextRound, modifier = Modifier.fillMaxWidth()) {
@@ -458,17 +459,28 @@ private fun OptionList(q: Question, chosen: String?, onPick: (String) -> Unit) {
 }
 
 @Composable
-private fun ResultRow(row: GradedRow) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Text("第 ${row.questionId} 题 · 你选 ${row.chosen} · 正确 ${row.answer}")
-        Text(
-            if (row.correct) "对" else "错",
-            color = if (row.correct) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.error,
-        )
+private fun ResultRow(row: GradedRow, question: Question?) {
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text("第 ${question?.position ?: row.questionId} 题 · 你选 ${row.chosen} · 正确 ${row.answer}")
+            Text(
+                if (row.correct) "对" else "错",
+                color = if (row.correct) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.error,
+            )
+        }
+        val explanation = question?.explanation
+        if (!explanation.isNullOrBlank()) {
+            Text(
+                explanation,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
     }
 }
 

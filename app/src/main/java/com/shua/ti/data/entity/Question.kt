@@ -10,6 +10,7 @@ import androidx.room.PrimaryKey
  * 题库中的一条四选一选择题。
  * answer 仅允许 A/B/C/D，由导入校验保证（REQ-001 AC-005）。
  * position 为同一题库内的取题顺序。
+ * explanation 为可选解析，缺省为空串（不用 null，避免到处判空）。
  */
 @Entity(
     tableName = "question",
@@ -43,4 +44,6 @@ data class Question(
     val answer: String,
     @ColumnInfo(name = "position")
     val position: Int,
+    @ColumnInfo(name = "explanation")
+    val explanation: String = "",
 )

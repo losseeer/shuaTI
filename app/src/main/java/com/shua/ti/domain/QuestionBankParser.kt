@@ -14,6 +14,7 @@ data class ParsedQuestion(
     val optionD: String,
     val answer: String,
     val position: Int,
+    val explanation: String = "",
 )
 
 data class ParsedBank(
@@ -120,6 +121,7 @@ object QuestionBankParser {
                 optionD = optionD,
                 answer = answer,
                 position = no,
+                explanation = obj.optionalText("explanation"),
             )
         }
 
@@ -137,4 +139,8 @@ object QuestionBankParser {
         val value = (this[key] as? JsonPrimitive)?.content?.trim()
         return value?.takeIf { it.isNotEmpty() }
     }
+
+    /** 可选字段：缺失、null 或空白都视为没有，返回空串。 */
+    private fun JsonObject.optionalText(key: String): String =
+        (this[key] as? JsonPrimitive)?.content?.trim().orEmpty()
 }

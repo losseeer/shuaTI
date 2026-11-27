@@ -76,6 +76,7 @@ class QuestionBankImporter(
                         optionD = q.optionD,
                         answer = q.answer,
                         position = q.position,
+                        explanation = q.explanation,
                     )
                 },
             )

@@ -13,6 +13,8 @@ data class BackupQuestion(
     @SerialName("option_d") val optionD: String,
     val answer: String,
     val position: Int,
+    /** 0.1.1 及更早的备份没有该字段，缺省为空串。 */
+    val explanation: String = "",
 )
 
 @Serializable
