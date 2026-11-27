@@ -86,7 +86,7 @@ fun App(
         val name = fileNameOf(context, uri) ?: "shared.json"
         val content = withContext(Dispatchers.IO) { readText(context, uri) }
         tab = 0
-        vm.import(name, content)
+        vm.importOrRestore(name, content)
         onSharedHandled()
     }
 
@@ -94,7 +94,7 @@ fun App(
         ActivityResultContracts.OpenDocument(),
     ) { uri ->
         if (uri != null) {
-            vm.import(fileNameOf(context, uri) ?: "imported.json", readText(context, uri))
+            vm.importOrRestore(fileNameOf(context, uri) ?: "imported.json", readText(context, uri))
         }
     }
 

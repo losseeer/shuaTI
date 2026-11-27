@@ -65,7 +65,8 @@ fun HelpScreen(onBack: () -> Unit, onNotify: (String) -> Unit) {
         HelpSection(
             title = "导入题库",
             body = "题库页点右上角「导入」，选一个 JSON 文件即可。\n\n" +
-                "微信或 QQ 里收到的题库，先在聊天里点开文件，选「用其他应用打开」，再选 shuaTI，会直接导入。",
+                "之前导出的备份文件也从这里选，会自动认出来并还原。\n\n" +
+                "微信或 QQ 里收到的文件，先在聊天里点开，选「用其他应用打开」，再选 shuaTI，会直接导入。",
         )
 
         HelpSection(

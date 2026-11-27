@@ -10,6 +10,7 @@ import com.shua.ti.data.entity.BackupFile
 import com.shua.ti.data.entity.PracticeProgress
 import com.shua.ti.data.entity.Question
 import com.shua.ti.data.entity.QuestionBank
+import com.shua.ti.domain.BackupCodec
 import com.shua.ti.domain.BackupErrorCode
 import com.shua.ti.domain.BankNames
 import com.shua.ti.domain.BackupService
@@ -127,6 +128,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     toast("${result.message}$where", isError = true)
                 }
             }
+        }
+    }
+
+    /**
+     * 导入入口的统一分流：备份文件走还原，题库文件走导入。
+     * 用户不需要区分两种文件，从文件管理器、微信、QQ 送进来的都走这里。
+     */
+    fun importOrRestore(fileName: String, content: String?) {
+        if (content != null && BackupCodec.looksLikeBackup(content)) {
+            restore(content)
+        } else {
+            import(fileName, content)
         }
     }
 

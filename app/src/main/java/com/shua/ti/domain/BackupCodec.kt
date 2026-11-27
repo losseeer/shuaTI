@@ -3,6 +3,9 @@ package com.shua.ti.domain
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 
 @Serializable
 data class BackupQuestion(
@@ -79,6 +82,15 @@ object BackupCodec {
 
     fun encode(payload: BackupPayload): String =
         json.encodeToString(BackupPayload.serializer(), payload)
+
+    /**
+     * 只看顶层 backup_type 标记，用来让导入入口把备份分流到还原。
+     * 不做完整校验，结构问题交给 [decode] 报。
+     */
+    fun looksLikeBackup(content: String): Boolean = runCatching {
+        val root = json.parseToJsonElement(content) as? JsonObject
+        root?.get("backup_type")?.jsonPrimitive?.contentOrNull == BackupPayload.BACKUP_TYPE
+    }.getOrDefault(false)
 
     fun decode(content: String): DecodeOutcome {
         val payload = try {

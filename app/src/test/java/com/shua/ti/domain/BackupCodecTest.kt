@@ -1,6 +1,7 @@
 package com.shua.ti.domain
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -165,4 +166,53 @@ class BackupCodecTest {
         assertTrue(decoded is DecodeOutcome.Ok)
         assertEquals("", (decoded as DecodeOutcome.Ok).payload.banks[0].questions[0].explanation)
     }
+
+    @Test
+    fun `backup content is recognised for routing`() {
+        val encoded = BackupCodec.encode(
+            BackupPayload(
+                exportedAt = 1,
+                banks = listOf(
+                    BackupBank(
+                        sourceFileName = "a.json",
+                        schemaVersion = 1,
+                        importedAt = 1,
+                        questions = listOf(sampleQuestion()),
+                    ),
+                ),
+            ),
+        )
+        assertTrue(BackupCodec.looksLikeBackup(encoded))
+    }
+
+    @Test
+    fun `question bank content is not treated as backup`() {
+        val bank = """{ "questions": [ { "stem": "x" } ] }"""
+        assertFalse(BackupCodec.looksLikeBackup(bank))
+    }
+
+    @Test
+    fun `array root is not treated as backup`() {
+        assertFalse(BackupCodec.looksLikeBackup("""[ { "stem": "x" } ]"""))
+    }
+
+    @Test
+    fun `broken json is not treated as backup`() {
+        assertFalse(BackupCodec.looksLikeBackup("{ not json"))
+    }
+
+    @Test
+    fun `object without backup_type is not treated as backup`() {
+        assertFalse(BackupCodec.looksLikeBackup("""{ "banks": [] }"""))
+    }
+
+    private fun sampleQuestion() = BackupQuestion(
+        stem = "1 + 1 = ?",
+        optionA = "1",
+        optionB = "2",
+        optionC = "3",
+        optionD = "4",
+        answer = "B",
+        position = 1,
+    )
 }
