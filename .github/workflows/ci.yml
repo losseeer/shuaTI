@@ -11,6 +11,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
+  ANDROID_HOME: ${{ github.workspace }}/android-sdk
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -26,11 +30,21 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # 不用 android-actions/setup-android：该 action 在 Node 24 runner 上会失败。
+      - name: Install Android command-line tools
+        run: |
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+          curl -sSLo /tmp/cmdline-tools.zip \
+            https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          unzip -q /tmp/cmdline-tools.zip -d "$ANDROID_SDK_ROOT/cmdline-tools"
+          mv "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools" "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
 
       - name: Install SDK components
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+        run: |
+          sdkmanager --version
+          yes | sdkmanager --licenses > /dev/null
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v3
