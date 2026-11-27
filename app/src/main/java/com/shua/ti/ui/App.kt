@@ -71,6 +71,7 @@ fun App(
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var tab by remember { mutableIntStateOf(0) }
+    var showHelp by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
 
     LaunchedEffect(state.toast) {
@@ -130,6 +131,9 @@ fun App(
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+            if (showHelp) {
+                HelpScreen(onBack = { showHelp = false }, onNotify = vm::notify)
+            } else {
             when (tab) {
                 0 -> LibraryScreen(
                     banks = state.banks,
@@ -159,7 +163,9 @@ fun App(
                     backups = state.backups,
                     onExport = vm::requestExport,
                     onBackupClick = vm::onBackupClicked,
+                    onOpenHelp = { showHelp = true },
                 )
+            }
             }
         }
     }
@@ -517,11 +523,35 @@ private fun SettingsScreen(
     backups: List<BackupFile>,
     onExport: () -> Unit,
     onBackupClick: (BackupFile) -> Unit,
+    onOpenHelp: () -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Text("设置", style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(12.dp))
         Button(onClick = onExport) { Text("导出备份") }
+        Spacer(Modifier.height(12.dp))
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onOpenHelp() },
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column {
+                    Text("使用说明", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "导入、刷题、备份的简要说明",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Text("›", style = MaterialTheme.typography.titleLarge)
+            }
+        }
         Spacer(Modifier.height(16.dp))
         if (backups.isEmpty()) {
             Text("暂无备份", color = MaterialTheme.colorScheme.onSurfaceVariant)

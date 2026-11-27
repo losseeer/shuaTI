@@ -469,6 +469,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = _state.value.copy(toast = null, isError = false)
     }
 
+    fun notify(message: String) {
+        toast(message)
+    }
+
     private fun toast(message: String, isError: Boolean = false) {
         _state.value = _state.value.copy(toast = message, isError = isError)
     }
