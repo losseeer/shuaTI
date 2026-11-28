@@ -82,6 +82,8 @@ class FullFlowTest {
             db.answerRecordDao(),
             db.practiceProgressDao(),
             db.backupFileDao(),
+            db.favoriteDao(),
+            db.excludedQuestionDao(),
         )
     }
 

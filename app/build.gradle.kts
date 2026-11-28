@@ -43,6 +43,16 @@ android {
     }
 
     buildTypes {
+        /**
+         * debug 与 release 使用同一签名：否则设备上的 debug 包无法被
+         * release 包覆盖安装，每次更新都要先卸载（会清空本地数据）。
+         * CI 环境没有 release 配置，此时回退到默认 debug 签名，照常构建。
+         */
+        debug {
+            if (!releaseSigning.getProperty("RELEASE_STORE_FILE").isNullOrBlank()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
         release {
             isMinifyEnabled = false
             if (!releaseSigning.getProperty("RELEASE_STORE_FILE").isNullOrBlank()) {
@@ -62,6 +72,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 

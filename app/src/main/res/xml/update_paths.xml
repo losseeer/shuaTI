@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 安装器读取的下载目录：cache/updates 下的 APK 才能通过 FileProvider 分享出去 -->
+<paths>
+    <cache-path name="updates" path="updates/" />
+</paths>

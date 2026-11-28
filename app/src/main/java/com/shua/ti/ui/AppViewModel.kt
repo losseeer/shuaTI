@@ -1,10 +1,12 @@
 package com.shua.ti.ui
 
 import android.app.Application
+import androidx.core.content.FileProvider
 import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.shua.ti.BuildConfig
 import com.shua.ti.data.AppDatabase
 import com.shua.ti.data.entity.BackupFile
 import com.shua.ti.data.entity.PracticeProgress
@@ -25,12 +27,17 @@ import com.shua.ti.domain.ReviewService
 import com.shua.ti.domain.RoundKind
 import com.shua.ti.domain.RoundStart
 import com.shua.ti.domain.SubmitResult
+import com.shua.ti.domain.UpdateChecker
+import com.shua.ti.domain.UpdateResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 
 enum class QuizMode { SINGLE, SCROLL }
 
@@ -106,6 +113,29 @@ data class ManageUi(
     val favIds: Set<Long> = emptySet(),
 )
 
+/** 更新检查与下载的状态机；下载失败必须可见（可重试）。 */
+sealed interface UpdateUi {
+    data object Checking : UpdateUi
+
+    data class Available(
+        val latestVersion: String,
+        val notes: String,
+        val downloadUrl: String,
+        val download: DownloadState = DownloadState.Idle,
+    ) : UpdateUi
+
+    data object UpToDate : UpdateUi
+
+    data class Failed(val message: String) : UpdateUi
+}
+
+sealed interface DownloadState {
+    data object Idle : DownloadState
+    data object Downloading : DownloadState
+    data object Ready : DownloadState
+    data class Failed(val message: String) : DownloadState
+}
+
 data class UiState(
     val banks: List<QuestionBank> = emptyList(),
     val activeBankId: Long? = null,
@@ -134,6 +164,8 @@ data class UiState(
     val questionDetail: ReviewRowUi? = null,
     /** 管理页目标题库。 */
     val manage: ManageUi? = null,
+    /** 检查更新的状态；null 表示未触发。 */
+    val update: UpdateUi? = null,
 )
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
@@ -833,6 +865,100 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             ?.use { true }
             ?: false
     }.getOrDefault(false)
+
+    /* ===== 检查更新 ===== */
+
+    fun checkUpdate() {
+        if (_state.value.update == UpdateUi.Checking) return
+        _state.value = _state.value.copy(update = UpdateUi.Checking)
+        viewModelScope.launch {
+            val result = UpdateChecker.check(BuildConfig.VERSION_NAME)
+            _state.value = _state.value.copy(
+                update = when (result) {
+                    is UpdateResult.Available -> UpdateUi.Available(
+                        latestVersion = result.latestVersion,
+                        notes = result.notes,
+                        downloadUrl = result.downloadUrl,
+                    )
+                    is UpdateResult.UpToDate -> UpdateUi.UpToDate
+                    is UpdateResult.Failed -> UpdateUi.Failed(result.message)
+                },
+            )
+        }
+    }
+
+    fun dismissUpdate() {
+        _state.value = _state.value.copy(update = null)
+    }
+
+    /** 下载 APK 并拉起系统安装器；失败保留对话框并给出原因。 */
+    fun downloadUpdate() {
+        val current = _state.value.update as? UpdateUi.Available ?: return
+        if (current.download == DownloadState.Downloading) return
+        _state.value = _state.value.copy(
+            update = current.copy(download = DownloadState.Downloading),
+        )
+        viewModelScope.launch {
+            val dir = File(getApplication<Application>().cacheDir, "updates").apply { mkdirs() }
+            val target = File(dir, "shuaTI-${current.latestVersion}.apk")
+            val error = withContext(Dispatchers.IO) {
+                runCatching {
+                    val conn = (URL(current.downloadUrl).openConnection() as HttpURLConnection).apply {
+                        connectTimeout = 10_000
+                        readTimeout = 60_000
+                        instanceFollowRedirects = true
+                        setRequestProperty("User-Agent", "shuaTI-update-check")
+                    }
+                    try {
+                        val code = conn.responseCode
+                        if (code !in 200..299) error("服务器返回 HTTP $code")
+                        conn.inputStream.use { input ->
+                            target.outputStream().use { output -> input.copyTo(output) }
+                        }
+                        if (target.length() < 10_000) error("下载内容不完整")
+                    } finally {
+                        conn.disconnect()
+                    }
+                }.exceptionOrNull()
+            }
+            if (error != null) {
+                val message = "下载失败：${error.message ?: "网络中断"}"
+                _state.value = _state.value.copy(
+                    update = current.copy(download = DownloadState.Failed(message)),
+                )
+                return@launch
+            }
+            _state.value = _state.value.copy(
+                update = current.copy(download = DownloadState.Ready),
+            )
+            launchInstaller(target)
+        }
+    }
+
+    /** 交给系统安装器；覆盖安装保留本机数据（签名一致才允许）。 */
+    private fun launchInstaller(apk: File) {
+        runCatching {
+            val uri = FileProvider.getUriForFile(
+                getApplication(),
+                "${getApplication<Application>().packageName}.updates",
+                apk,
+            )
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            getApplication<Application>().startActivity(intent)
+        }.onFailure {
+            _state.value = _state.value.copy(
+                update = (_state.value.update as? UpdateUi.Available)?.copy(
+                    download = DownloadState.Failed("无法打开安装器：${it.message ?: "未知原因"}"),
+                ),
+            )
+        }
+    }
+
+    /** 设置页展示的当前版本。 */
+    fun currentVersion(): String = BuildConfig.VERSION_NAME
 
     fun dismissDialog() {
         _state.value = _state.value.copy(dialog = null)

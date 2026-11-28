@@ -200,9 +200,11 @@ fun App(
                     )
                     else -> SettingsScreen(
                         backups = state.backups,
+                        currentVersion = vm.currentVersion(),
                         onExport = vm::requestExport,
                         onBackupClick = vm::onBackupClicked,
                         onOpenHelp = { showHelp = true },
+                        onCheckUpdate = vm::checkUpdate,
                     )
                 }
             }
@@ -221,6 +223,15 @@ fun App(
                     action?.invoke()
                 }) { Text(dialog.positive) }
             },
+        )
+    }
+
+    state.update?.let { update ->
+        UpdateDialog(
+            update = update,
+            onDownload = vm::downloadUpdate,
+            onRetry = vm::checkUpdate,
+            onDismiss = vm::dismissUpdate,
         )
     }
 
@@ -736,11 +747,93 @@ private fun ProgressScreen(
 }
 
 @Composable
+private fun UpdateDialog(
+    update: UpdateUi,
+    onDownload: () -> Unit,
+    onRetry: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    when (update) {
+        is UpdateUi.Checking -> AlertDialog(
+            onDismissRequest = {},
+            title = { Text("检查更新") },
+            text = { Text("正在检查…") },
+            confirmButton = {},
+        )
+        is UpdateUi.Available -> {
+            val download = update.download
+            AlertDialog(
+                onDismissRequest = {
+                    if (download != DownloadState.Downloading) onDismiss()
+                },
+                title = { Text("发现新版本 ${update.latestVersion}") },
+                text = {
+                    Column {
+                        if (update.notes.isNotBlank()) {
+                            Text(
+                                update.notes.take(400),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                        }
+                        when (download) {
+                            DownloadState.Idle -> Text("覆盖安装会保留本机题库与记录。")
+                            DownloadState.Downloading -> Text("正在下载…")
+                            DownloadState.Ready -> Text("下载完成，正在打开安装器…")
+                            is DownloadState.Failed -> Text(
+                                download.message,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = onDownload,
+                        enabled = download != DownloadState.Downloading,
+                    ) {
+                        Text(
+                            when (download) {
+                                is DownloadState.Failed -> "重试下载"
+                                DownloadState.Ready -> "重新打开安装器"
+                                else -> "下载并安装"
+                            },
+                        )
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = onDismiss,
+                        enabled = download != DownloadState.Downloading,
+                    ) { Text("稍后") }
+                },
+            )
+        }
+        is UpdateUi.UpToDate -> AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("检查更新") },
+            text = { Text("已是最新版本") },
+            confirmButton = { TextButton(onClick = onDismiss) { Text("知道了") } },
+        )
+        is UpdateUi.Failed -> AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("检查更新失败") },
+            text = { Text(update.message) },
+            confirmButton = { TextButton(onClick = onRetry) { Text("重试") } },
+            dismissButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
+        )
+    }
+}
+
+@Composable
 private fun SettingsScreen(
     backups: List<BackupFile>,
+    currentVersion: String,
     onExport: () -> Unit,
     onBackupClick: (BackupFile) -> Unit,
     onOpenHelp: () -> Unit,
+    onCheckUpdate: () -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Text("设置", style = MaterialTheme.typography.titleLarge)
@@ -762,6 +855,29 @@ private fun SettingsScreen(
                     Text("使用说明", style = MaterialTheme.typography.titleSmall)
                     Text(
                         "导入、刷题、备份的简要说明",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Text("›", style = MaterialTheme.typography.titleLarge)
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onCheckUpdate() },
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column {
+                    Text("检查更新", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "当前版本 $currentVersion",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
