@@ -19,6 +19,14 @@ enum class QuizErrorCode {
     BANK_DELETED,
 }
 
+/**
+ * 轮次类型。
+ * NORMAL：按顺序队列出题，交卷推进 next_round_start。
+ * SPECIAL：错题与收藏合集轮；REPLAY：整轮重刷。两类不推进顺序进度，
+ * 但轮次号照常递增、记录照常写入回看。
+ */
+enum class RoundKind { NORMAL, SPECIAL, REPLAY }
+
 sealed interface RoundStart {
     data class Started(
         val bankId: Long,
@@ -44,6 +52,8 @@ sealed interface SubmitResult {
         val size: Int,
         val rows: List<GradedRow>,
         val nextRoundStart: Int,
+        /** 与轮次类型一致，界面可据此展示轮次标签。 */
+        val roundKind: RoundKind = RoundKind.NORMAL,
     ) : SubmitResult
 
     data class Failed(val code: QuizErrorCode, val message: String) : SubmitResult
@@ -95,12 +105,38 @@ class QuizEngine(
         )
     }
 
+    /**
+     * 以给定题目集合开一轮：错题与收藏合集（SPECIAL）或整轮重刷（REPLAY）。
+     * 轮次号照常递增；顺序进度由交卷时按类型决定是否推进。
+     */
+    suspend fun startRoundFromQuestions(
+        bankId: Long,
+        questions: List<Question>,
+        kind: RoundKind,
+    ): RoundStart {
+        val bank = bankDao.findById(bankId)
+            ?: return RoundStart.Failed(QuizErrorCode.EMPTY_BANK, "题库不存在或已删除")
+        if (questions.isEmpty()) {
+            return RoundStart.Failed(QuizErrorCode.EMPTY_BANK, "没有可刷的题")
+        }
+        val progress = progressDao.find(bankId)
+        val roundNo = (progress?.completedRounds ?: 0) + 1
+        return RoundStart.Started(
+            bankId = bankId,
+            roundNo = roundNo,
+            requestedSize = questions.size,
+            actualSize = questions.size,
+            questions = questions,
+        )
+    }
+
     suspend fun submit(
         bankId: Long,
         roundNo: Int,
         questions: List<Question>,
         answers: Map<Long, String>,
         confirmedUnanswered: Boolean,
+        kind: RoundKind = RoundKind.NORMAL,
     ): SubmitResult {
         if (bankDao.findById(bankId) == null) {
             return SubmitResult.Failed(QuizErrorCode.BANK_DELETED, "题库已删除，本轮作废")
@@ -118,6 +154,7 @@ class QuizEngine(
 
         val now = clock()
         return try {
+            val advance = kind == RoundKind.NORMAL
             db.withTransaction {
                 answerRecordDao.insertAll(
                     grade.rows.map { row ->
@@ -128,11 +165,13 @@ class QuizEngine(
                             chosenOption = row.chosen,
                             isCorrect = row.correct,
                             answeredAt = now,
+                            roundKind = kind.name,
                         )
                     },
                 )
                 val previous = progressDao.find(bankId)
-                val nextStart = (previous?.nextRoundStart ?: 1) + questions.size
+                val currentStart = previous?.nextRoundStart ?: 1
+                val nextStart = if (advance) currentStart + questions.size else currentStart
                 progressDao.upsert(
                     PracticeProgress(
                         bankId = bankId,
@@ -151,6 +190,7 @@ class QuizEngine(
                     size = questions.size,
                     rows = grade.rows,
                     nextRoundStart = nextStart,
+                    roundKind = kind,
                 )
             }
         } catch (e: Exception) {

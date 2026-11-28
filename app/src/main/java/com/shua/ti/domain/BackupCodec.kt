@@ -46,6 +46,12 @@ data class BackupBank(
     val questions: List<BackupQuestion>,
     val progress: BackupProgress? = null,
     val records: List<BackupRecord> = emptyList(),
+    /**
+     * v2：收藏与手工移出错题集，按题目 position 定位（与 records 同理）。
+     * v1 备份没有这两个字段，缺省为空，还原后收藏会缺，但不阻塞还原。
+     */
+    @SerialName("favorites") val favorites: List<Int> = emptyList(),
+    @SerialName("exclusions") val exclusions: List<Int> = emptyList(),
 )
 
 @Serializable
@@ -57,7 +63,12 @@ data class BackupPayload(
 ) {
     companion object {
         const val BACKUP_TYPE = "shuati_backup"
-        const val FORMAT_VERSION = 1
+
+        /**
+         * v1：题库 + 进度 + 作答记录。
+         * v2：增加 favorites / exclusions（收藏与移出错题集）。
+         */
+        const val FORMAT_VERSION = 2
     }
 }
 

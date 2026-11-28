@@ -26,4 +26,7 @@ data class QuestionBank(
     val questionCount: Int,
     @ColumnInfo(name = "imported_at")
     val importedAt: Long,
+    /** 常驻的「错题与收藏题库」标记：不参与导入去重、备份与删除。 */
+    @ColumnInfo(name = "is_special")
+    val isSpecial: Boolean = false,
 )

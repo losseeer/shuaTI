@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -46,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -59,6 +61,7 @@ import com.shua.ti.data.entity.PracticeProgress
 import com.shua.ti.data.entity.Question
 import com.shua.ti.data.entity.QuestionBank
 import com.shua.ti.domain.GradedRow
+import com.shua.ti.domain.RoundKind
 
 private val TABS = listOf("题库", "刷题", "进度", "设置")
 
@@ -133,39 +136,75 @@ fun App(
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             if (showHelp) {
                 HelpScreen(onBack = { showHelp = false }, onNotify = vm::notify)
-            } else {
-            when (tab) {
-                0 -> LibraryScreen(
-                    banks = state.banks,
-                    activeId = state.activeBankId,
-                    onImport = { importLauncher.launch(arrayOf("application/json", "text/plain", "text/*")) },
-                    onSelect = vm::selectBank,
-                    onRename = vm::renameBank,
-                    onDelete = vm::deleteActiveBank,
+            } else when {
+                state.questionDetail != null -> QuestionDetailScreen(
+                    row = state.questionDetail!!,
+                    isFav = state.questionDetail!!.questionId in state.favIds,
+                    onToggleFav = { vm.toggleFavoriteInDetail() },
+                    onBack = vm::closeQuestionDetail,
                 )
-                1 -> QuizScreen(
-                    round = state.round,
-                    hasBank = state.activeBankId != null,
-                    onStart = vm::startRound,
-                    onPick = vm::pick,
-                    onPrev = vm::prevQuestion,
-                    onNext = vm::nextQuestion,
-                    onMode = vm::setMode,
-                    onSubmit = vm::submit,
-                    onNextRound = vm::nextRound,
+                state.roundDetail != null -> RoundDetailScreen(
+                    detail = state.roundDetail!!,
+                    favIds = state.favIds,
+                    onFilter = vm::setRoundFilter,
+                    onOpenQuestion = vm::openQuestionDetail,
+                    onReplay = vm::replayRound,
+                    onToggleFav = vm::toggleFavoriteAsync,
+                    onBack = vm::closeRoundDetail,
                 )
-                2 -> ProgressScreen(
-                    bank = state.banks.firstOrNull { it.bankId == state.activeBankId },
-                    progress = state.progress,
-                    history = state.history,
+                state.manage != null -> ManageScreen(
+                    manage = state.manage!!,
+                    onRemove = vm::removeQuestion,
+                    onExclude = vm::excludeFromWrong,
+                    onUnfavorite = vm::unfavorite,
+                    onBack = vm::closeManage,
                 )
-                else -> SettingsScreen(
-                    backups = state.backups,
-                    onExport = vm::requestExport,
-                    onBackupClick = vm::onBackupClicked,
-                    onOpenHelp = { showHelp = true },
-                )
-            }
+                else -> when (tab) {
+                    0 -> LibraryScreen(
+                        banks = state.banks,
+                        activeId = state.activeBankId,
+                        specialBankId = state.specialBankId,
+                        wrongCount = state.wrongCount,
+                        favCount = state.favCount,
+                        menuBank = state.menuBank,
+                        onImport = { importLauncher.launch(arrayOf("application/json", "text/plain", "text/*")) },
+                        onSetCurrent = vm::selectBank,
+                        onOpenMenu = vm::openBankMenu,
+                        onDismissMenu = vm::dismissBankMenu,
+                        onRename = vm::renameBank,
+                        onManage = vm::openManage,
+                        onClearProgress = vm::clearProgress,
+                        onDelete = vm::deleteBank,
+                    )
+                    1 -> QuizScreen(
+                        round = state.round,
+                        hasBank = state.activeBankId != null,
+                        isSpecial = state.activeBankId != null && state.activeBankId == state.specialBankId,
+                        wrongCount = state.wrongCount,
+                        favCount = state.favCount,
+                        favIds = state.favIds,
+                        onStart = vm::startRound,
+                        onPick = vm::pick,
+                        onPrev = vm::prevQuestion,
+                        onNext = vm::nextQuestion,
+                        onMode = vm::setMode,
+                        onSubmit = vm::submit,
+                        onNextRound = vm::nextRound,
+                        onToggleFav = vm::toggleFavoriteAsync,
+                    )
+                    2 -> ProgressScreen(
+                        bank = state.banks.firstOrNull { it.bankId == state.activeBankId },
+                        progress = state.progress,
+                        history = state.history,
+                        onOpenRound = vm::openRound,
+                    )
+                    else -> SettingsScreen(
+                        backups = state.backups,
+                        onExport = vm::requestExport,
+                        onBackupClick = vm::onBackupClicked,
+                        onOpenHelp = { showHelp = true },
+                    )
+                }
             }
         }
     }
@@ -211,12 +250,21 @@ fun App(
 private fun LibraryScreen(
     banks: List<QuestionBank>,
     activeId: Long?,
+    specialBankId: Long?,
+    wrongCount: Int,
+    favCount: Int,
+    menuBank: QuestionBank?,
     onImport: () -> Unit,
-    onSelect: (Long) -> Unit,
+    onSetCurrent: (Long) -> Unit,
+    onOpenMenu: (Long) -> Unit,
+    onDismissMenu: () -> Unit,
     onRename: (Long, String) -> Unit,
-    onDelete: () -> Unit,
+    onManage: (Long) -> Unit,
+    onClearProgress: (Long) -> Unit,
+    onDelete: (Long) -> Unit,
 ) {
-    var confirmingDelete by remember { mutableStateOf(false) }
+    var confirmingDelete by remember { mutableStateOf<QuestionBank?>(null) }
+    var confirmingClear by remember { mutableStateOf<QuestionBank?>(null) }
     var renameTarget by remember { mutableStateOf<QuestionBank?>(null) }
     var renameInput by remember { mutableStateOf("") }
 
@@ -236,6 +284,7 @@ private fun LibraryScreen(
                 TextButton(onClick = {
                     val name = renameInput
                     renameTarget = null
+                    onDismissMenu()
                     onRename(bank.bankId, name)
                 }) { Text("保存") }
             },
@@ -244,22 +293,74 @@ private fun LibraryScreen(
             },
         )
     }
-    if (confirmingDelete) {
+    confirmingDelete?.let { bank ->
         AlertDialog(
-            onDismissRequest = { confirmingDelete = false },
+            onDismissRequest = { confirmingDelete = null },
             title = { Text("删除题库") },
-            text = { Text("将删除该题库及其答题记录与进度，此操作无法恢复。") },
+            text = { Text("将删除「${bank.sourceFileName}」及其答题记录与进度，此操作无法恢复。") },
             confirmButton = {
                 TextButton(onClick = {
-                    confirmingDelete = false
-                    onDelete()
+                    confirmingDelete = null
+                    onDismissMenu()
+                    onDelete(bank.bankId)
                 }) { Text("删除") }
             },
             dismissButton = {
-                TextButton(onClick = { confirmingDelete = false }) { Text("取消") }
+                TextButton(onClick = { confirmingDelete = null }) { Text("取消") }
             },
         )
     }
+    confirmingClear?.let { bank ->
+        AlertDialog(
+            onDismissRequest = { confirmingClear = null },
+            title = { Text("清空进度") },
+            text = { Text("将清空「${bank.sourceFileName}」的全部作答记录与进度。当前错题将自动收藏。此操作无法恢复。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmingClear = null
+                    onDismissMenu()
+                    onClearProgress(bank.bankId)
+                }) { Text("清空") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmingClear = null }) { Text("取消") }
+            },
+        )
+    }
+
+    menuBank?.let { bank ->
+        AlertDialog(
+            onDismissRequest = onDismissMenu,
+            title = { Text(bank.sourceFileName) },
+            text = {
+                Text(
+                    if (bank.isSpecial) "错题 $wrongCount · 收藏 $favCount"
+                    else "${bank.questionCount} 题",
+                )
+            },
+            confirmButton = {
+                Column {
+                    TextButton(onClick = {
+                        renameInput = bank.sourceFileName
+                        renameTarget = bank
+                    }) { Text("重命名") }
+                    TextButton(onClick = {
+                        onDismissMenu()
+                        onManage(bank.bankId)
+                    }) { Text("管理（移除题目）") }
+                    if (!bank.isSpecial) {
+                        TextButton(onClick = { confirmingClear = bank }) { Text("清空进度") }
+                        TextButton(onClick = { confirmingDelete = bank }) {
+                            Text("删除", color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                    TextButton(onClick = onDismissMenu) { Text("取消") }
+                }
+            },
+            dismissButton = {},
+        )
+    }
+
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -270,24 +371,68 @@ private fun LibraryScreen(
             Button(onClick = onImport) { Text("导入") }
         }
         Spacer(Modifier.height(12.dp))
-        if (banks.isEmpty()) {
-            Text(
-                "还没有题库，点「导入」开始",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(banks, key = { it.bankId }) { bank ->
-                    val active = bank.bankId == activeId
+
+        val special = banks.firstOrNull { it.isSpecial }
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            special?.let { sp ->
+                item(key = "special") {
+                    val active = sp.bankId == activeId
                     Card(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpenMenu(sp.bankId) },
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                     ) {
-                        Column(modifier = Modifier.padding(14.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                            ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(14.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column {
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text("错题与收藏题库", style = MaterialTheme.typography.titleMedium)
+                                    if (active) {
+                                        Text("当前", color = MaterialTheme.colorScheme.primary)
+                                    }
+                                }
+                                Text(
+                                    "错题 $wrongCount · 收藏 $favCount",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            if (!active) {
+                                OutlinedButton(onClick = { onSetCurrent(sp.bankId) }) {
+                                    Text("设为当前")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (banks.none { it.isSpecial }) {
+                item(key = "empty-hint") {
+                    Text(
+                        "还没有题库，点「导入」开始",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            items(banks.filterNot { it.isSpecial }, key = { it.bankId }) { bank ->
+                val active = bank.bankId == activeId
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onOpenMenu(bank.bankId) },
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text(bank.sourceFileName, style = MaterialTheme.typography.titleMedium)
                                 if (active) {
                                     Text("当前", color = MaterialTheme.colorScheme.primary)
@@ -298,20 +443,10 @@ private fun LibraryScreen(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
-                            Spacer(Modifier.height(8.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                if (!active) {
-                                    OutlinedButton(onClick = { onSelect(bank.bankId) }) {
-                                        Text("设为当前")
-                                    }
-                                }
-                                TextButton(onClick = {
-                                    renameTarget = bank
-                                    renameInput = bank.sourceFileName
-                                }) { Text("重命名") }
-                                if (active) {
-                                    TextButton(onClick = { confirmingDelete = true }) { Text("删除") }
-                                }
+                        }
+                        if (!active) {
+                            OutlinedButton(onClick = { onSetCurrent(bank.bankId) }) {
+                                Text("设为当前")
                             }
                         }
                     }
@@ -325,6 +460,10 @@ private fun LibraryScreen(
 private fun QuizScreen(
     round: RoundUi?,
     hasBank: Boolean,
+    isSpecial: Boolean,
+    wrongCount: Int,
+    favCount: Int,
+    favIds: Set<Long>,
     onStart: (Int) -> Unit,
     onPick: (Long, String) -> Unit,
     onPrev: () -> Unit,
@@ -332,12 +471,54 @@ private fun QuizScreen(
     onMode: (QuizMode) -> Unit,
     onSubmit: () -> Unit,
     onNextRound: () -> Unit,
+    onToggleFav: (Long) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Text("刷题", style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(12.dp))
 
         if (round == null) {
+            if (isSpecial) {
+                Text("当前题库：错题与收藏题库", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(8.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("开始刷题", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                "错题 $wrongCount",
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Text(
+                                "收藏 $favCount",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            listOf(5, 10, 15, 20).forEach { size ->
+                                OutlinedButton(
+                                    onClick = { onStart(size) },
+                                    enabled = wrongCount + favCount > 0,
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 10.dp),
+                                ) {
+                                    Text("$size 题", maxLines = 1)
+                                }
+                            }
+                        }
+                    }
+                }
+                return@Column
+            }
             Text(
                 if (hasBank) "本轮题量" else "尚未指定题库，请先导入",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -365,7 +546,7 @@ private fun QuizScreen(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Text("第 ${round.roundNo} 轮 · ${round.questions.size} 题")
+            Text("第 ${round.roundNo} 轮${round.tag?.let { " · $it" } ?: ""} · ${round.questions.size} 题")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
                     selected = round.mode == QuizMode.SINGLE,
@@ -404,7 +585,19 @@ private fun QuizScreen(
         if (round.mode == QuizMode.SINGLE) {
             val q = round.questions[round.index]
             Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                Text("${round.index + 1} / ${round.questions.size}", style = MaterialTheme.typography.bodySmall)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("${round.index + 1} / ${round.questions.size}", style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = { onToggleFav(q.questionId) }) {
+                        Text(
+                            if (q.questionId in favIds) "★ 已收藏" else "☆ 收藏",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
                 Spacer(Modifier.height(6.dp))
                 Text(q.stem, style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(10.dp))
@@ -427,7 +620,19 @@ private fun QuizScreen(
                 items(round.questions, key = { it.questionId }) { q ->
                     val index = round.questions.indexOf(q)
                     Column {
-                        Text("${index + 1} / ${round.questions.size}", style = MaterialTheme.typography.bodySmall)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("${index + 1} / ${round.questions.size}", style = MaterialTheme.typography.bodySmall)
+                            TextButton(onClick = { onToggleFav(q.questionId) }) {
+                                Text(
+                                    if (q.questionId in favIds) "★ 已收藏" else "☆ 收藏",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        }
                         Text(q.stem, style = MaterialTheme.typography.titleSmall)
                         OptionList(q, round.answers[q.questionId]) { letter -> onPick(q.questionId, letter) }
                     }
@@ -591,6 +796,382 @@ private fun SettingsScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ProgressScreen(
+    bank: QuestionBank?,
+    progress: PracticeProgress?,
+    history: List<RoundSummary>,
+    onOpenRound: (Long, Int) -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        Text("练习进度", style = MaterialTheme.typography.titleLarge)
+        Spacer(Modifier.height(12.dp))
+        if (bank == null) {
+            Text("尚未指定题库", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            return@Column
+        }
+        Text(bank.sourceFileName, style = MaterialTheme.typography.titleMedium)
+        Text(
+            "已完成 ${progress?.completedRounds ?: 0} 轮 · 下一轮从第 ${progress?.nextRoundStart ?: 1} 题",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(12.dp))
+        if (history.isEmpty()) {
+            Text("还没有完成的轮次", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(history, key = { it.roundNo }) { item ->
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpenRound(bank.bankId, item.roundNo) },
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(14.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("第 ${item.roundNo} 轮", style = MaterialTheme.typography.titleSmall)
+                                item.tag?.let { tag ->
+                                    Text(
+                                        tag,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error,
+                                    )
+                                }
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "答对 ${item.correct} / ${item.total}",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Text("  ›", color = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RoundDetailScreen(
+    detail: RoundDetailUi,
+    favIds: Set<Long>,
+    onFilter: (Boolean) -> Unit,
+    onOpenQuestion: (ReviewRowUi) -> Unit,
+    onReplay: (Long, Int) -> Unit,
+    onToggleFav: (Long) -> Unit,
+    onBack: () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onBack) { Text("‹") }
+            Text("第 ${detail.roundNo} 轮", style = MaterialTheme.typography.titleLarge)
+            detail.tag?.let { tag ->
+                Spacer(Modifier.width(8.dp))
+                Text(tag, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column {
+                    Text(
+                        "${detail.correct} / ${detail.total}",
+                        style = MaterialTheme.typography.headlineSmall,
+                    )
+                    Text("答对题数", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Button(onClick = { onReplay(detail.bankId, detail.roundNo) }) { Text("重刷这轮") }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                selected = !detail.filterWrongOnly,
+                onClick = { onFilter(false) },
+                label = { Text("全部") },
+            )
+            FilterChip(
+                selected = detail.filterWrongOnly,
+                onClick = { onFilter(true) },
+                label = { Text("只看错题") },
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        if (detail.visibleRows.isEmpty()) {
+            Text(
+                if (detail.filterWrongOnly) "这一轮没有错题" else "没有作答记录",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(detail.visibleRows, key = { it.questionId }) { row ->
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpenQuestion(row) },
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Text(
+                                    if (row.correct) "对" else "错",
+                                    color = if (row.correct) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.error,
+                                    style = MaterialTheme.typography.titleSmall,
+                                )
+                                Text(
+                                    row.question?.let { "第 ${it.position} 题" } ?: "题目已移除",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            row.question?.let { q ->
+                                Text(
+                                    q.stem,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.padding(top = 4.dp),
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            Text(
+                                "你选 ${row.chosen} · 正确 ${row.answer}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 4.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuestionDetailScreen(
+    row: ReviewRowUi,
+    isFav: Boolean,
+    onToggleFav: () -> Unit,
+    onBack: () -> Unit,
+) {
+    val q = row.question
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onBack) { Text("‹") }
+                Text("题目详情", style = MaterialTheme.typography.titleLarge)
+            }
+            if (q != null) {
+                TextButton(onClick = onToggleFav) {
+                    Text(if (isFav) "★ 已收藏" else "☆ 收藏", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        if (q == null) {
+            Text("题目已移除，仅作答记录保留", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            return@Column
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                if (row.correct) "对" else "错",
+                color = if (row.correct) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.titleSmall,
+            )
+            Text(
+                "第 ${q.position} 题",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(q.stem, style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(10.dp))
+        listOf("A" to q.optionA, "B" to q.optionB, "C" to q.optionC, "D" to q.optionD)
+            .forEach { (letter, text) ->
+                val isAnswer = letter == row.answer
+                val isChosen = letter == row.chosen
+                val border = when {
+                    isAnswer -> MaterialTheme.colorScheme.primary
+                    isChosen -> MaterialTheme.colorScheme.error
+                    else -> MaterialTheme.colorScheme.outlineVariant
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("$letter. $text", modifier = Modifier.weight(1f))
+                    if (isAnswer) {
+                        Text(
+                            "（正确答案）",
+                            color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    } else if (isChosen) {
+                        Text(
+                            "（你的选择，错误）",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                }
+                HorizontalDivider()
+            }
+        if (row.chosen == "U") {
+            Text(
+                "该题未作答，计为答错",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+        }
+        if (row.explanation.isNotBlank()) {
+            Spacer(Modifier.height(10.dp))
+            Text("解析", style = MaterialTheme.typography.titleSmall)
+            Text(
+                row.explanation,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ManageScreen(
+    manage: ManageUi,
+    onRemove: (Long, Long) -> Unit,
+    onExclude: (Long, Long) -> Unit,
+    onUnfavorite: (Long) -> Unit,
+    onBack: () -> Unit,
+) {
+    var confirmRemove by remember { mutableStateOf<Question?>(null) }
+    confirmRemove?.let { q ->
+        AlertDialog(
+            onDismissRequest = { confirmRemove = null },
+            title = { Text("移除题目") },
+            text = { Text("将把第 ${q.position} 题从题库中移除。该题的作答记录保留，此操作无法恢复。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    val target = confirmRemove
+                    confirmRemove = null
+                    target?.let { onRemove(manage.bankId, it.questionId) }
+                }) { Text("移除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmRemove = null }) { Text("取消") }
+            },
+        )
+    }
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onBack) { Text("‹") }
+            Text("管理", style = MaterialTheme.typography.titleLarge)
+        }
+        Spacer(Modifier.height(10.dp))
+        if (manage.special) {
+            Text("错题 ${manage.wrong.size}", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(6.dp))
+            if (manage.wrong.isEmpty()) {
+                Text("暂无错题", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(manage.wrong, key = { it.questionId }) { q ->
+                        ManageQuestionCard(q) {
+                            TextButton(onClick = { onExclude(manage.bankId, q.questionId) }) {
+                                Text("移出错题集")
+                            }
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Text("收藏 ${manage.favorites.size}", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(6.dp))
+            if (manage.favorites.isEmpty()) {
+                Text("暂无收藏", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(manage.favorites, key = { it.questionId }) { q ->
+                        ManageQuestionCard(q) {
+                            TextButton(onClick = { onUnfavorite(q.questionId) }) {
+                                Text("取消收藏")
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            if (manage.questions.isEmpty()) {
+                Text("题库为空", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(manage.questions, key = { it.questionId }) { q ->
+                        ManageQuestionCard(q) {
+                            TextButton(onClick = { confirmRemove = q }) {
+                                Text("移除", color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ManageQuestionCard(q: Question, action: @Composable () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "第 ${q.position} 题",
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                action()
+            }
+            Text(
+                q.stem,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }

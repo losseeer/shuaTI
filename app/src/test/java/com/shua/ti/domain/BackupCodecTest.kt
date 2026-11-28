@@ -215,4 +215,41 @@ class BackupCodecTest {
         answer = "B",
         position = 1,
     )
+
+    /* ===== v2：收藏与移出错题集随备份迁移 ===== */
+
+    @Test
+    fun `v2 favorites and exclusions survive round trip`() {
+        val v2 = payload().copy(
+            formatVersion = 2,
+            banks = listOf(
+                payload().banks[0].copy(
+                    favorites = listOf(1),
+                    exclusions = listOf(1),
+                ),
+            ),
+        )
+        val decoded = BackupCodec.decode(BackupCodec.encode(v2))
+        assertTrue(decoded is DecodeOutcome.Ok)
+        val bank = (decoded as DecodeOutcome.Ok).payload.banks[0]
+        assertEquals(listOf(1), bank.favorites)
+        assertEquals(listOf(1), bank.exclusions)
+    }
+
+    @Test
+    fun `v1 backup without favorites decodes with empty lists`() {
+        // v1 文件没有 favorites / exclusions 字段；ignoreUnknownKeys + 缺省值保证可还原。
+        val v1 = payload()
+        val decoded = BackupCodec.decode(BackupCodec.encode(v1))
+        assertTrue(decoded is DecodeOutcome.Ok)
+        val bank = (decoded as DecodeOutcome.Ok).payload.banks[0]
+        assertTrue(bank.favorites.isEmpty())
+        assertTrue(bank.exclusions.isEmpty())
+        assertEquals(2, decoded.payload.formatVersion)
+    }
+
+    @Test
+    fun `format version constant is 2`() {
+        assertEquals(2, BackupPayload.FORMAT_VERSION)
+    }
 }

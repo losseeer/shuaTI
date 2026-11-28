@@ -21,6 +21,8 @@ import com.shua.ti.domain.QuestionBankImporter
 import com.shua.ti.domain.QuizEngine
 import com.shua.ti.domain.QuizErrorCode
 import com.shua.ti.domain.RestoreResult
+import com.shua.ti.domain.ReviewService
+import com.shua.ti.domain.RoundKind
 import com.shua.ti.domain.RoundStart
 import com.shua.ti.domain.SubmitResult
 import kotlinx.coroutines.Dispatchers
@@ -41,7 +43,15 @@ data class RoundUi(
     val index: Int = 0,
     val mode: QuizMode = QuizMode.SINGLE,
     val graded: SubmitResult.Graded? = null,
-)
+    val roundKind: RoundKind = RoundKind.NORMAL,
+) {
+    /** 轮次标签：错题与收藏 / 重刷；顺序轮无标签。 */
+    val tag: String? get() = when (roundKind) {
+        RoundKind.SPECIAL -> "错题与收藏"
+        RoundKind.REPLAY -> "重刷"
+        RoundKind.NORMAL -> null
+    }
+}
 
 data class DialogUi(
     val title: String,
@@ -54,6 +64,46 @@ data class RoundSummary(
     val roundNo: Int,
     val correct: Int,
     val total: Int,
+    val kind: RoundKind = RoundKind.NORMAL,
+) {
+    val tag: String? get() = when (kind) {
+        RoundKind.SPECIAL -> "错题与收藏"
+        RoundKind.REPLAY -> "重刷"
+        RoundKind.NORMAL -> null
+    }
+}
+
+/** 轮次回看的题目行：题目可能已被移除，question 为 null 时界面显示占位。 */
+data class ReviewRowUi(
+    val questionId: Long,
+    val question: Question?,
+    val chosen: String,
+    val answer: String,
+    val correct: Boolean,
+    val explanation: String,
+)
+
+data class RoundDetailUi(
+    val bankId: Long,
+    val roundNo: Int,
+    val tag: String?,
+    val correct: Int,
+    val total: Int,
+    val rows: List<ReviewRowUi>,
+    val filterWrongOnly: Boolean = false,
+) {
+    val visibleRows: List<ReviewRowUi>
+        get() = if (filterWrongOnly) rows.filterNot { it.correct } else rows
+}
+
+/** 管理页数据：普通库列题目，特殊库分错题与收藏两组。 */
+data class ManageUi(
+    val bankId: Long,
+    val special: Boolean,
+    val questions: List<Question> = emptyList(),
+    val wrong: List<Question> = emptyList(),
+    val favorites: List<Question> = emptyList(),
+    val favIds: Set<Long> = emptySet(),
 )
 
 data class UiState(
@@ -68,6 +118,22 @@ data class UiState(
     val dialog: DialogUi? = null,
     val pendingExport: ExportResult.Success? = null,
     val backupAction: BackupFile? = null,
+    /** 常驻错题库 bank_id；启动时确保存在。 */
+    val specialBankId: Long? = null,
+    /** 错题集题数（实时推导）。 */
+    val wrongCount: Int = 0,
+    /** 收藏总数。 */
+    val favCount: Int = 0,
+    /** 收藏中的题目 id。 */
+    val favIds: Set<Long> = emptySet(),
+    /** 题库操作菜单目标。 */
+    val menuBank: QuestionBank? = null,
+    /** 轮次回看详情。 */
+    val roundDetail: RoundDetailUi? = null,
+    /** 单题回看详情。 */
+    val questionDetail: ReviewRowUi? = null,
+    /** 管理页目标题库。 */
+    val manage: ManageUi? = null,
 )
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
@@ -92,12 +158,29 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         answerRecordDao = db.answerRecordDao(),
         progressDao = db.practiceProgressDao(),
         backupFileDao = db.backupFileDao(),
+        favoriteDao = db.favoriteDao(),
+        excludedQuestionDao = db.excludedQuestionDao(),
+    )
+    private val review = ReviewService(
+        db = db,
+        bankDao = db.questionBankDao(),
+        questionDao = db.questionDao(),
+        answerRecordDao = db.answerRecordDao(),
+        progressDao = db.practiceProgressDao(),
+        favoriteDao = db.favoriteDao(),
+        excludedQuestionDao = db.excludedQuestionDao(),
     )
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
 
     init {
+        viewModelScope.launch {
+            // 常驻错题库：首次启动创建，之后始终存在。
+            val special = review.ensureSpecialBank()
+            _state.value = _state.value.copy(specialBankId = special.bankId)
+            refreshCounts()
+        }
         viewModelScope.launch {
             db.questionBankDao().observeAll().collect { banks ->
                 _state.value = _state.value.copy(banks = banks)
@@ -114,7 +197,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _state.value = _state.value.copy(backups = list)
             }
         }
+        viewModelScope.launch {
+            db.favoriteDao().observeAllIds().collect { ids ->
+                _state.value = _state.value.copy(favIds = ids.toSet(), favCount = ids.size)
+            }
+        }
     }
+
+    /** 错题数依赖作答记录与移出记录，两者变化点后手动刷新。 */
+    private suspend fun refreshCounts() {
+        val wrong = review.wrongQuestions()
+        _state.value = _state.value.copy(wrongCount = wrong.size)
+    }
+
+    /** 特殊库当前 bank_id，未就绪时返回 null。 */
+    private fun specialId(): Long? = _state.value.specialBankId
 
     fun import(fileName: String, content: String?) {
         viewModelScope.launch {
@@ -163,6 +260,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             toast("尚未指定题库，请先导入", isError = true)
             return
         }
+        if (bankId == specialId()) {
+            startSpecialRound(size)
+            return
+        }
+        startNormalRound(bankId, size, RoundKind.NORMAL)
+    }
+
+    private fun startNormalRound(bankId: Long, size: Int, kind: RoundKind) {
         viewModelScope.launch {
             when (val result = engine.startRound(bankId, size)) {
                 is RoundStart.Started -> {
@@ -175,7 +280,65 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                             bankId = bankId,
                             requestedSize = size,
                             questions = result.questions,
+                            roundKind = kind,
                         ),
+                    )
+                }
+                is RoundStart.Failed -> toast(result.message, isError = true)
+            }
+        }
+    }
+
+    /** 特殊库合集轮：错题 + 收藏去重后按题号顺序出题。 */
+    private fun startSpecialRound(size: Int) {
+        val bankId = specialId() ?: return
+        viewModelScope.launch {
+            val all = review.specialRoundQuestions()
+            if (all.isEmpty()) {
+                toast("暂无错题与收藏", isError = true)
+                return@launch
+            }
+            val actual = minOf(size, all.size)
+            if (actual < size) {
+                toast("可用 ${all.size} 题，本轮按 $actual 题进行")
+            }
+            when (val result = engine.startRoundFromQuestions(bankId, all.take(actual), RoundKind.SPECIAL)) {
+                is RoundStart.Started -> {
+                    _state.value = _state.value.copy(
+                        round = RoundUi(
+                            roundNo = result.roundNo,
+                            bankId = bankId,
+                            requestedSize = actual,
+                            questions = result.questions,
+                            roundKind = RoundKind.SPECIAL,
+                        ),
+                    )
+                }
+                is RoundStart.Failed -> toast(result.message, isError = true)
+            }
+        }
+    }
+
+    /** 整轮重刷：以该轮的题目集合开一轮新记录，顺序进度不推进。 */
+    fun replayRound(bankId: Long, roundNo: Int) {
+        viewModelScope.launch {
+            val rows = review.roundRows(bankId, roundNo)
+            val questions = rows.mapNotNull { it.question }
+            if (questions.isEmpty()) {
+                toast("该轮题目已不存在，无法重刷", isError = true)
+                return@launch
+            }
+            when (val result = engine.startRoundFromQuestions(bankId, questions, RoundKind.REPLAY)) {
+                is RoundStart.Started -> {
+                    _state.value = _state.value.copy(
+                        round = RoundUi(
+                            roundNo = result.roundNo,
+                            bankId = bankId,
+                            requestedSize = questions.size,
+                            questions = result.questions,
+                            roundKind = RoundKind.REPLAY,
+                        ),
+                        roundDetail = null,
                     )
                 }
                 is RoundStart.Failed -> toast(result.message, isError = true)
@@ -223,6 +386,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 questions = round.questions,
                 answers = round.answers,
                 confirmedUnanswered = false,
+                kind = round.roundKind,
             )) {
                 is SubmitResult.NeedConfirm -> {
                     _state.value = _state.value.copy(
@@ -249,6 +413,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 questions = round.questions,
                 answers = round.answers,
                 confirmedUnanswered = true,
+                kind = round.roundKind,
             )
             if (result is SubmitResult.Graded) onGraded(result)
             else if (result is SubmitResult.Failed) toast(result.message, isError = true)
@@ -262,7 +427,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             progress = db.practiceProgressDao().find(round.bankId),
         )
         loadHistory(round.bankId)
-        toast("答对 ${result.correct} / ${result.size}；进度已保存")
+        refreshCounts()
+        val tip = when (result.roundKind) {
+            RoundKind.NORMAL -> "答对 ${result.correct} / ${result.size}；进度已保存"
+            else -> "答对 ${result.correct} / ${result.size}；答对的错题已移出错题集"
+        }
+        toast(tip)
     }
 
     private suspend fun loadHistory(bankId: Long) {
@@ -274,6 +444,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     roundNo = round,
                     correct = list.count { it.isCorrect },
                     total = list.size,
+                    kind = list.first().roundKind.let { kindName ->
+                        RoundKind.entries.firstOrNull { it.name == kindName } ?: RoundKind.NORMAL
+                    },
                 )
             }
             .sortedByDescending { it.roundNo }
@@ -320,10 +493,197 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun deleteActiveBank() {
         val bankId = _state.value.activeBankId ?: return
+        deleteBank(bankId)
+    }
+
+    /** 题库菜单的删除入口；常驻错题库不可删除（界面层不放该选项）。 */
+    fun deleteBank(bankId: Long) {
         viewModelScope.launch {
+            if (bankId == specialId()) {
+                toast("错题与收藏题库无法删除", isError = true)
+                return@launch
+            }
             engine.deleteBank(bankId)
-            _state.value = _state.value.copy(activeBankId = null, round = null, progress = null)
+            if (_state.value.manage?.bankId == bankId) {
+                _state.value = _state.value.copy(manage = null)
+            }
+            _state.value = _state.value.copy(
+                activeBankId = _state.value.activeBankId?.takeIf { it != bankId },
+                round = null,
+            )
             toast("题库已删除，进度一并清除")
+        }
+    }
+
+    /* ===== 收藏 ===== */
+
+    /** @return 切换后是否已收藏。 */
+    suspend fun toggleFavorite(questionId: Long): Boolean {
+        val nowFav = review.toggleFavorite(questionId)
+        refreshCounts()
+        return nowFav
+    }
+
+    fun toggleFavoriteAsync(questionId: Long) {
+        viewModelScope.launch { toggleFavorite(questionId) }
+    }
+
+    /* ===== 题库菜单 ===== */
+
+    fun openBankMenu(bankId: Long) {
+        val bank = _state.value.banks.firstOrNull { it.bankId == bankId } ?: return
+        _state.value = _state.value.copy(menuBank = bank)
+    }
+
+    fun dismissBankMenu() {
+        _state.value = _state.value.copy(menuBank = null)
+    }
+
+    /** 清空一个题库的进度；当前错题自动收藏（用户已确认方案）。 */
+    fun clearProgress(bankId: Long) {
+        viewModelScope.launch {
+            if (bankId == specialId()) {
+                toast("错题与收藏题库不支持清空进度", isError = true)
+                return@launch
+            }
+            val added = review.clearProgress(bankId)
+            if (_state.value.activeBankId == bankId) {
+                _state.value = _state.value.copy(
+                    progress = null,
+                    history = emptyList(),
+                )
+            }
+            refreshCounts()
+            toast("已清空进度")
+            loadHistory(bankId)
+        }
+    }
+
+    /* ===== 回看 ===== */
+
+    fun openRound(bankId: Long, roundNo: Int) {
+        viewModelScope.launch {
+            val rows = review.roundRows(bankId, roundNo)
+            val correct = rows.count { it.record.isCorrect }
+            val kind = rows.firstOrNull()?.record?.roundKind?.let { name ->
+                RoundKind.entries.firstOrNull { it.name == name }
+            } ?: RoundKind.NORMAL
+            val tag = when (kind) {
+                RoundKind.SPECIAL -> "错题与收藏"
+                RoundKind.REPLAY -> "重刷"
+                RoundKind.NORMAL -> null
+            }
+            _state.value = _state.value.copy(
+                roundDetail = RoundDetailUi(
+                    bankId = bankId,
+                    roundNo = roundNo,
+                    tag = tag,
+                    correct = correct,
+                    total = rows.size,
+                    rows = rows.map { row ->
+                        ReviewRowUi(
+                            questionId = row.record.questionId,
+                            question = row.question,
+                            chosen = row.record.chosenOption,
+                            answer = row.question?.answer ?: "",
+                            correct = row.record.isCorrect,
+                            explanation = row.question?.explanation ?: "",
+                        )
+                    },
+                ),
+            )
+        }
+    }
+
+    fun setRoundFilter(wrongOnly: Boolean) {
+        val detail = _state.value.roundDetail ?: return
+        _state.value = _state.value.copy(roundDetail = detail.copy(filterWrongOnly = wrongOnly))
+    }
+
+    fun closeRoundDetail() {
+        _state.value = _state.value.copy(roundDetail = null)
+    }
+
+    fun openQuestionDetail(row: ReviewRowUi) {
+        _state.value = _state.value.copy(questionDetail = row)
+    }
+
+    fun closeQuestionDetail() {
+        _state.value = _state.value.copy(questionDetail = null)
+    }
+
+    fun toggleFavoriteInDetail() {
+        val row = _state.value.questionDetail ?: return
+        viewModelScope.launch {
+            val nowFav = review.toggleFavorite(row.questionId)
+            refreshCounts()
+            _state.value = _state.value.copy(
+                questionDetail = row.copy(
+                    question = row.question, // 题目对象不变，收藏态由 favIds 渲染
+                ),
+                favIds = db.favoriteDao().findAllIds().toSet(),
+            )
+        }
+    }
+
+    /* ===== 管理 ===== */
+
+    fun openManage(bankId: Long) {
+        viewModelScope.launch {
+            val bank = db.questionBankDao().findById(bankId) ?: return@launch
+            val special = bank.isSpecial
+            val favIds = db.favoriteDao().findAllIds().toSet()
+            val manage = if (special) {
+                ManageUi(
+                    bankId = bankId,
+                    special = true,
+                    wrong = review.wrongQuestions(),
+                    favorites = review.favoriteQuestions(),
+                    favIds = favIds,
+                )
+            } else {
+                ManageUi(
+                    bankId = bankId,
+                    special = false,
+                    questions = db.questionDao().page(bankId, Int.MAX_VALUE, 0),
+                    favIds = favIds,
+                )
+            }
+            _state.value = _state.value.copy(manage = manage)
+        }
+    }
+
+    fun closeManage() {
+        _state.value = _state.value.copy(manage = null)
+    }
+
+    /** 普通库：移除题目。作答记录保留。 */
+    fun removeQuestion(bankId: Long, questionId: Long) {
+        viewModelScope.launch {
+            review.removeQuestion(bankId, questionId)
+            refreshCounts()
+            toast("已移除 1 题")
+            openManage(bankId)
+        }
+    }
+
+    /** 特殊库：把题移出错题集。 */
+    fun excludeFromWrong(bankId: Long, questionId: Long) {
+        viewModelScope.launch {
+            review.excludeFromWrong(bankId, questionId)
+            refreshCounts()
+            toast("已移出错题集")
+            openManage(bankId)
+        }
+    }
+
+    /** 特殊库：取消收藏。 */
+    fun unfavorite(questionId: Long) {
+        viewModelScope.launch {
+            review.toggleFavorite(questionId)
+            refreshCounts()
+            toast("已取消收藏")
+            _state.value.manage?.let { openManage(it.bankId) }
         }
     }
 

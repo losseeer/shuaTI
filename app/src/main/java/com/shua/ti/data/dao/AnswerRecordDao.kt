@@ -42,6 +42,9 @@ interface AnswerRecordDao {
     @Query("DELETE FROM answer_record WHERE bank_id = :bankId")
     suspend fun deleteByBank(bankId: Long)
 
+    @Query("SELECT * FROM answer_record")
+    suspend fun findAll(): List<AnswerRecord>
+
     @Query(
         "SELECT COUNT(*) FROM answer_record WHERE bank_id = :bankId AND round_no = :roundNo"
     )

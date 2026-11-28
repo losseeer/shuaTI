@@ -26,4 +26,13 @@ interface QuestionDao {
 
     @Query("SELECT question_id FROM question WHERE bank_id = :bankId ORDER BY position ASC")
     suspend fun idsByBank(bankId: Long): List<Long>
+
+    @Query("SELECT * FROM question WHERE question_id = :questionId")
+    suspend fun findById(questionId: Long): Question?
+
+    @Query("SELECT * FROM question WHERE question_id IN (:questionIds)")
+    suspend fun findByIds(questionIds: List<Long>): List<Question>
+
+    @Query("DELETE FROM question WHERE bank_id = :bankId AND question_id = :questionId")
+    suspend fun deleteById(bankId: Long, questionId: Long)
 }

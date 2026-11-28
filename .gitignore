@@ -16,3 +16,6 @@ dev-tree/versions/*.tmp
 # 开发技能产物（定位 / 需求 / 设计 / 原型 / 开发状态树），不入库
 .project/
 dev-tree/
+
+#个人题库
+question-banks/

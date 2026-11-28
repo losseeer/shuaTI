@@ -49,7 +49,9 @@ class QuestionBankImporter(
         }
         val bank = (outcome as ParseOutcome.Ok).bank
 
-        if (bankDao.findBySourceFile(fileName) != null) {
+        // 常驻错题库不占导入名：用户导入同名文件不算重复。
+        val existing = bankDao.findBySourceFile(fileName)
+        if (existing != null && !existing.isSpecial) {
             return ImportResult.Failure(
                 ImportErrorCode.DUPLICATE_IMPORT,
                 "来源文件已存在",

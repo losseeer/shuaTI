@@ -42,4 +42,7 @@ data class AnswerRecord(
     val isCorrect: Boolean,
     @ColumnInfo(name = "answered_at")
     val answeredAt: Long,
+    /** 轮次类型：NORMAL 顺序轮 / SPECIAL 错题与收藏轮 / REPLAY 整轮重刷。后两类不推进顺序进度。 */
+    @ColumnInfo(name = "round_kind")
+    val roundKind: String = "NORMAL",
 )

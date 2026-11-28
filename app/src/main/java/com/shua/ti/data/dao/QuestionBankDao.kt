@@ -27,6 +27,9 @@ interface QuestionBankDao {
     @Query("UPDATE question_bank SET source_file_name = :name WHERE bank_id = :bankId")
     suspend fun rename(bankId: Long, name: String)
 
+    @Query("SELECT * FROM question_bank WHERE is_special = 1 LIMIT 1")
+    suspend fun findSpecial(): QuestionBank?
+
     @Query("DELETE FROM question_bank WHERE bank_id = :bankId")
     suspend fun deleteById(bankId: Long)
 }

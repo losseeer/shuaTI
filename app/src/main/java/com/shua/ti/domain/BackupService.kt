@@ -4,11 +4,15 @@ import androidx.room.withTransaction
 import com.shua.ti.data.AppDatabase
 import com.shua.ti.data.dao.AnswerRecordDao
 import com.shua.ti.data.dao.BackupFileDao
+import com.shua.ti.data.dao.ExcludedQuestionDao
+import com.shua.ti.data.dao.FavoriteDao
 import com.shua.ti.data.dao.PracticeProgressDao
 import com.shua.ti.data.dao.QuestionBankDao
 import com.shua.ti.data.dao.QuestionDao
 import com.shua.ti.data.entity.AnswerRecord
 import com.shua.ti.data.entity.BackupFile
+import com.shua.ti.data.entity.ExcludedQuestion
+import com.shua.ti.data.entity.Favorite
 import com.shua.ti.data.entity.PracticeProgress
 import com.shua.ti.data.entity.Question
 import com.shua.ti.data.entity.QuestionBank
@@ -65,11 +69,13 @@ class BackupService(
     private val answerRecordDao: AnswerRecordDao,
     private val progressDao: PracticeProgressDao,
     private val backupFileDao: BackupFileDao,
+    private val favoriteDao: FavoriteDao,
+    private val excludedQuestionDao: ExcludedQuestionDao,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
 
     suspend fun export(fileName: String = defaultFileName()): ExportResult {
-        val banks = bankDao.findAll()
+        val banks = bankDao.findAll().filterNot { it.isSpecial }
         if (banks.isEmpty()) {
             return ExportResult.Failure(BackupErrorCode.NO_DATA, "暂无可导出数据，不生成文件")
         }
@@ -79,6 +85,11 @@ class BackupService(
             val progress = progressDao.find(bank.bankId)
             val records = answerRecordDao.findAllByBank(bank.bankId)
             val idToPosition = questions.associate { it.questionId to it.position }
+            val favoriteIds = favoriteDao.findAllIds().toSet()
+            val favorites = questions.filter { it.questionId in favoriteIds }.map { it.position }
+            val exclusions = excludedQuestionDao.findAll()
+                .filter { it.bankId == bank.bankId }
+                .mapNotNull { ex -> idToPosition[ex.questionId] }
             BackupBank(
                 sourceFileName = bank.sourceFileName,
                 schemaVersion = bank.schemaVersion,
@@ -112,6 +123,8 @@ class BackupService(
                         answeredAt = r.answeredAt,
                     )
                 },
+                favorites = favorites,
+                exclusions = exclusions,
             )
         }
 
@@ -205,6 +218,25 @@ class BackupService(
                             },
                         )
                         roundCount += bank.records.map { it.roundNo }.distinct().size
+                    }
+
+                    if (bank.favorites.isNotEmpty()) {
+                        val now = clock()
+                        bank.favorites.forEach { pos ->
+                            idMap[pos]?.let { qid ->
+                                favoriteDao.insert(Favorite(questionId = qid, createdAt = now))
+                            }
+                        }
+                    }
+                    if (bank.exclusions.isNotEmpty()) {
+                        val now = clock()
+                        bank.exclusions.forEach { pos ->
+                            idMap[pos]?.let { qid ->
+                                excludedQuestionDao.insert(
+                                    ExcludedQuestion(bankId = bankId, questionId = qid, createdAt = now),
+                                )
+                            }
+                        }
                     }
 
                     bank.progress?.let { p ->
