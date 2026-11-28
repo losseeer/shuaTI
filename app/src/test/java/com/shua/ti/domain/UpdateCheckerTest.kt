@@ -78,4 +78,25 @@ class UpdateCheckerTest {
         assertEquals("v0.1.4", release?.tagName)
         assertEquals("https://example.com/app.apk", release?.apkUrl)
     }
+
+    @Test
+    fun `release notes are converted to numbered plain text`() {
+        val body = """
+            ## 新增
+
+            - **回看与重刷**：进度页点任意轮次回看
+            - 收藏：答题页可收藏
+
+            ## 修复
+
+            - 修复迁移崩溃
+        """.trimIndent()
+        val text = UpdateChecker.formatReleaseNotes(body)
+        assertTrue(text.contains("1. 回看与重刷：进度页点任意轮次回看"))
+        assertTrue(text.contains("2. 收藏：答题页可收藏"))
+        assertTrue(text.contains("3. 修复迁移崩溃"))
+        assertTrue(!text.contains("##"))
+        assertTrue(!text.contains("**"))
+        assertTrue(!text.contains("- "))
+    }
 }

@@ -29,10 +29,13 @@ import com.shua.ti.domain.RoundStart
 import com.shua.ti.domain.SubmitResult
 import com.shua.ti.domain.UpdateChecker
 import com.shua.ti.domain.UpdateResult
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -131,8 +134,12 @@ sealed interface UpdateUi {
 
 sealed interface DownloadState {
     data object Idle : DownloadState
-    data object Downloading : DownloadState
+
+    /** progress 为 null 表示总长度未知（服务器未给 Content-Length）。 */
+    data class Downloading(val progress: Float?) : DownloadState
+
     data object Ready : DownloadState
+
     data class Failed(val message: String) : DownloadState
 }
 
@@ -868,8 +875,35 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /* ===== 检查更新 ===== */
 
+    /** 正在进行的下载（用于「挂起」后恢复对话框、取消时清理）。 */
+    private data class ActiveDownload(
+        val latestVersion: String,
+        val notes: String,
+        val downloadUrl: String,
+        val target: File,
+    )
+
+    private var downloadJob: Job? = null
+    private var activeDownload: ActiveDownload? = null
+
     fun checkUpdate() {
         if (_state.value.update == UpdateUi.Checking) return
+        // 下载被挂起（对话框已关闭）时，再次进入恢复进度而不是重新检查。
+        activeDownload?.let { active ->
+            if (downloadJob?.isActive == true) {
+                val progress = (_state.value.update as? UpdateUi.Available)?.download
+                    ?.let { (it as? DownloadState.Downloading)?.progress }
+                _state.value = _state.value.copy(
+                    update = UpdateUi.Available(
+                        latestVersion = active.latestVersion,
+                        notes = UpdateChecker.formatReleaseNotes(active.notes),
+                        downloadUrl = active.downloadUrl,
+                        download = DownloadState.Downloading(progress),
+                    ),
+                )
+                return
+            }
+        }
         _state.value = _state.value.copy(update = UpdateUi.Checking)
         viewModelScope.launch {
             val result = UpdateChecker.check(BuildConfig.VERSION_NAME)
@@ -877,7 +911,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 update = when (result) {
                     is UpdateResult.Available -> UpdateUi.Available(
                         latestVersion = result.latestVersion,
-                        notes = result.notes,
+                        notes = UpdateChecker.formatReleaseNotes(result.notes),
                         downloadUrl = result.downloadUrl,
                     )
                     is UpdateResult.UpToDate -> UpdateUi.UpToDate
@@ -887,6 +921,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** 关闭对话框；下载中关闭等于后台挂起，下载继续。 */
     fun dismissUpdate() {
         _state.value = _state.value.copy(update = null)
     }
@@ -894,15 +929,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** 下载 APK 并拉起系统安装器；失败保留对话框并给出原因。 */
     fun downloadUpdate() {
         val current = _state.value.update as? UpdateUi.Available ?: return
-        if (current.download == DownloadState.Downloading) return
-        _state.value = _state.value.copy(
-            update = current.copy(download = DownloadState.Downloading),
+        if (downloadJob?.isActive == true) return
+        val app = getApplication<Application>()
+        val dir = File(app.cacheDir, "updates").apply { mkdirs() }
+        // 清掉历史更新包，避免缓存目录累积（每次更新约 7MB）。
+        dir.listFiles { f -> f.extension == "apk" }?.forEach { it.delete() }
+        val target = File(dir, "shuaTI-${current.latestVersion}.apk")
+        activeDownload = ActiveDownload(
+            latestVersion = current.latestVersion,
+            notes = current.notes,
+            downloadUrl = current.downloadUrl,
+            target = target,
         )
-        viewModelScope.launch {
-            val dir = File(getApplication<Application>().cacheDir, "updates").apply { mkdirs() }
-            val target = File(dir, "shuaTI-${current.latestVersion}.apk")
-            val error = withContext(Dispatchers.IO) {
-                runCatching {
+        _state.value = _state.value.copy(
+            update = current.copy(download = DownloadState.Downloading(0f)),
+        )
+
+        downloadJob = viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
                     val conn = (URL(current.downloadUrl).openConnection() as HttpURLConnection).apply {
                         connectTimeout = 10_000
                         readTimeout = 60_000
@@ -912,27 +957,72 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     try {
                         val code = conn.responseCode
                         if (code !in 200..299) error("服务器返回 HTTP $code")
+                        val total = conn.contentLengthLong
                         conn.inputStream.use { input ->
-                            target.outputStream().use { output -> input.copyTo(output) }
+                            target.outputStream().use { output ->
+                                val buffer = ByteArray(16 * 1024)
+                                var read = 0L
+                                var lastPct = -1
+                                while (true) {
+                                    ensureActive()
+                                    val n = input.read(buffer)
+                                    if (n < 0) break
+                                    output.write(buffer, 0, n)
+                                    read += n
+                                    if (total > 0) {
+                                        val pct = (read * 100 / total).toInt().coerceIn(0, 100)
+                                        if (pct != lastPct) {
+                                            lastPct = pct
+                                            _state.value = _state.value.copy(
+                                                update = (_state.value.update as? UpdateUi.Available)
+                                                    ?.copy(download = DownloadState.Downloading(pct / 100f)),
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
                         if (target.length() < 10_000) error("下载内容不完整")
                     } finally {
                         conn.disconnect()
                     }
-                }.exceptionOrNull()
-            }
-            if (error != null) {
-                val message = "下载失败：${error.message ?: "网络中断"}"
+                }
+                val shown = _state.value.update as? UpdateUi.Available
                 _state.value = _state.value.copy(
-                    update = current.copy(download = DownloadState.Failed(message)),
+                    update = UpdateUi.Available(
+                        latestVersion = current.latestVersion,
+                        notes = current.notes,
+                        downloadUrl = current.downloadUrl,
+                        download = DownloadState.Ready,
+                    ),
                 )
-                return@launch
+                if (shown == null) {
+                    // 挂起状态下载完成：直接拉起安装器，同时用提示告知（不依赖对话框）。
+                    toast("更新包已下载，正在打开安装器")
+                }
+                launchInstaller(target)
+            } catch (e: CancellationException) {
+                target.delete()
+                throw e
+            } catch (e: Exception) {
+                target.delete()
+                _state.value = _state.value.copy(
+                    update = (_state.value.update as? UpdateUi.Available)?.copy(
+                        download = DownloadState.Failed("下载失败：${e.message ?: "网络中断"}"),
+                    ),
+                )
             }
-            _state.value = _state.value.copy(
-                update = current.copy(download = DownloadState.Ready),
-            )
-            launchInstaller(target)
         }
+    }
+
+    /** 取消下载：中断任务、删除半截文件，状态回到可重试。 */
+    fun cancelDownload() {
+        downloadJob?.cancel()
+        downloadJob = null
+        activeDownload?.target?.delete()
+        activeDownload = null
+        val current = _state.value.update as? UpdateUi.Available ?: return
+        _state.value = _state.value.copy(update = current.copy(download = DownloadState.Idle))
     }
 
     /** 交给系统安装器；覆盖安装保留本机数据（签名一致才允许）。 */

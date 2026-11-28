@@ -86,6 +86,43 @@ object UpdateChecker {
     }
 
     /**
+     * 把 GitHub release 的 Markdown 说明转成纯文本编号列表：
+     * 去掉标题符号与列表符号、粗体/代码标记，条目按 1. 2. 排列。
+     * 标题行保留为不带编号的文本行，用于分组。
+     */
+    fun formatReleaseNotes(body: String): String {
+        val out = mutableListOf<String>()
+        var index = 0
+        body.lineSequence().forEach { raw ->
+            val line = raw.trim()
+            if (line.isEmpty()) return@forEach
+            val bullet = when {
+                line.startsWith("- ") -> line.removePrefix("- ")
+                line.startsWith("* ") -> line.removePrefix("* ")
+                else -> null
+            }
+            when {
+                line.startsWith("#") -> out.add(stripInline(line.trimStart('#')))
+                bullet != null -> {
+                    index++
+                    out.add("$index. ${stripInline(bullet)}")
+                }
+                else -> {
+                    index++
+                    out.add("$index. ${stripInline(line)}")
+                }
+            }
+        }
+        return out.joinToString("\n")
+    }
+
+    private fun stripInline(text: String): String = text
+        .replace("**", "")
+        .replace("`", "")
+        .replace(Regex("\\[([^]]+)]\\([^)]*\\)"), "$1")
+        .trim()
+
+    /**
      * 语义化版本比较：忽略前导 v 与 -rc 之类后缀，只比数字段。
      * @return 正数表示 a 更新，0 相同，负数表示 b 更新。
      */

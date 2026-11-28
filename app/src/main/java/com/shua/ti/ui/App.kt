@@ -27,6 +27,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -75,6 +76,7 @@ fun App(
     val context = LocalContext.current
     var tab by remember { mutableIntStateOf(0) }
     var showHelp by remember { mutableStateOf(false) }
+    var showBackup by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
 
     LaunchedEffect(state.toast) {
@@ -198,11 +200,16 @@ fun App(
                         history = state.history,
                         onOpenRound = vm::openRound,
                     )
-                    else -> SettingsScreen(
-                        backups = state.backups,
+                    else -> if (showBackup) {
+                        BackupScreen(
+                            backups = state.backups,
+                            onExport = vm::requestExport,
+                            onBackupClick = vm::onBackupClicked,
+                            onBack = { showBackup = false },
+                        )
+                    } else SettingsScreen(
                         currentVersion = vm.currentVersion(),
-                        onExport = vm::requestExport,
-                        onBackupClick = vm::onBackupClicked,
+                        onOpenBackup = { showBackup = true },
                         onOpenHelp = { showHelp = true },
                         onCheckUpdate = vm::checkUpdate,
                     )
@@ -230,6 +237,7 @@ fun App(
         UpdateDialog(
             update = update,
             onDownload = vm::downloadUpdate,
+            onCancelDownload = vm::cancelDownload,
             onRetry = vm::checkUpdate,
             onDismiss = vm::dismissUpdate,
         )
@@ -750,6 +758,7 @@ private fun ProgressScreen(
 private fun UpdateDialog(
     update: UpdateUi,
     onDownload: () -> Unit,
+    onCancelDownload: () -> Unit,
     onRetry: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -763,15 +772,13 @@ private fun UpdateDialog(
         is UpdateUi.Available -> {
             val download = update.download
             AlertDialog(
-                onDismissRequest = {
-                    if (download != DownloadState.Downloading) onDismiss()
-                },
+                onDismissRequest = onDismiss,
                 title = { Text("发现新版本 ${update.latestVersion}") },
                 text = {
                     Column {
                         if (update.notes.isNotBlank()) {
                             Text(
-                                update.notes.take(400),
+                                update.notes,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -779,7 +786,30 @@ private fun UpdateDialog(
                         }
                         when (download) {
                             DownloadState.Idle -> Text("覆盖安装会保留本机题库与记录。")
-                            DownloadState.Downloading -> Text("正在下载…")
+                            is DownloadState.Downloading -> {
+                                val progress = download.progress
+                                if (progress != null) {
+                                    LinearProgressIndicator(
+                                        progress = { progress },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                    Spacer(Modifier.height(6.dp))
+                                    Text(
+                                        "下载中 ${(progress * 100).toInt()}%",
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                } else {
+                                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                                    Spacer(Modifier.height(6.dp))
+                                    Text("正在下载…", style = MaterialTheme.typography.bodySmall)
+                                }
+                                Text(
+                                    "可点击空白处收起，下载会继续",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(top = 4.dp),
+                                )
+                            }
                             DownloadState.Ready -> Text("下载完成，正在打开安装器…")
                             is DownloadState.Failed -> Text(
                                 download.message,
@@ -789,24 +819,22 @@ private fun UpdateDialog(
                     }
                 },
                 confirmButton = {
-                    TextButton(
-                        onClick = onDownload,
-                        enabled = download != DownloadState.Downloading,
-                    ) {
-                        Text(
-                            when (download) {
-                                is DownloadState.Failed -> "重试下载"
-                                DownloadState.Ready -> "重新打开安装器"
-                                else -> "下载并安装"
-                            },
-                        )
+                    if (download is DownloadState.Downloading) {
+                        TextButton(onClick = onCancelDownload) { Text("取消更新") }
+                    } else {
+                        TextButton(onClick = onDownload) {
+                            Text(
+                                if (download is DownloadState.Failed) "重试下载"
+                                else if (download == DownloadState.Ready) "重新打开安装器"
+                                else "下载并安装",
+                            )
+                        }
                     }
                 },
                 dismissButton = {
-                    TextButton(
-                        onClick = onDismiss,
-                        enabled = download != DownloadState.Downloading,
-                    ) { Text("稍后") }
+                    if (download !is DownloadState.Downloading) {
+                        TextButton(onClick = onDismiss) { Text("稍后") }
+                    }
                 },
             )
         }
@@ -828,10 +856,8 @@ private fun UpdateDialog(
 
 @Composable
 private fun SettingsScreen(
-    backups: List<BackupFile>,
     currentVersion: String,
-    onExport: () -> Unit,
-    onBackupClick: (BackupFile) -> Unit,
+    onOpenBackup: () -> Unit,
     onOpenHelp: () -> Unit,
     onCheckUpdate: () -> Unit,
 ) {
@@ -841,7 +867,7 @@ private fun SettingsScreen(
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { onExport() },
+                .clickable { onOpenBackup() },
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         ) {
             Row(
@@ -850,9 +876,9 @@ private fun SettingsScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column {
-                    Text("导出备份", style = MaterialTheme.typography.titleSmall)
+                    Text("备份与恢复", style = MaterialTheme.typography.titleSmall)
                     Text(
-                        "包含题库、答题记录与收藏",
+                        "导出备份、还原备份文件",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -906,6 +932,24 @@ private fun SettingsScreen(
                 Text("›", style = MaterialTheme.typography.titleLarge)
             }
         }
+        Spacer(Modifier.height(16.dp))
+    }
+}
+
+@Composable
+private fun BackupScreen(
+    backups: List<BackupFile>,
+    onExport: () -> Unit,
+    onBackupClick: (BackupFile) -> Unit,
+    onBack: () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onBack) { Text("‹") }
+            Text("备份与恢复", style = MaterialTheme.typography.titleLarge)
+        }
+        Spacer(Modifier.height(12.dp))
+        Button(onClick = onExport, modifier = Modifier.fillMaxWidth()) { Text("导出备份") }
         Spacer(Modifier.height(16.dp))
         if (backups.isEmpty()) {
             Text("暂无备份", color = MaterialTheme.colorScheme.onSurfaceVariant)
