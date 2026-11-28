@@ -838,8 +838,29 @@ private fun SettingsScreen(
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Text("设置", style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(12.dp))
-        Button(onClick = onExport) { Text("导出备份") }
-        Spacer(Modifier.height(12.dp))
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onExport() },
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column {
+                    Text("导出备份", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "包含题库、答题记录与收藏",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Text("›", style = MaterialTheme.typography.titleLarge)
+            }
+        }
+        Spacer(Modifier.height(8.dp))
         Card(
             modifier = Modifier
                 .fillMaxWidth()
