@@ -97,6 +97,11 @@ abstract class AppDatabase : RoomDatabase() {
                         "FOREIGN KEY(bank_id) REFERENCES question_bank(bank_id) " +
                         "ON DELETE CASCADE)",
                 )
+                // 实体上声明了 question_id 索引，迁移里必须建同名索引，否则 Room 校验不通过。
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_excluded_question_question_id " +
+                        "ON excluded_question(question_id)",
+                )
                 db.execSQL(
                     "ALTER TABLE answer_record ADD COLUMN round_kind TEXT NOT NULL DEFAULT 'NORMAL'",
                 )
